@@ -3,6 +3,7 @@ use foldhash::fast::RandomState as FoldRandomState;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
+use voracious_radix_sort::RadixSort;
 mod hashers;
 use hashers::{MurmurHasher, NoopHasher, U64Hasher};
 
@@ -12,6 +13,42 @@ fn count_unique_by_hash<Hasher: BuildHasher>(data: &[u64], hasher: Hasher) -> us
         hasher.insert(*d);
     }
     hasher.len()
+}
+
+fn count_unique_by_sort(data: &[u64]) -> usize {
+    let mut sorted_data = data.to_vec();
+    sorted_data.sort();
+    count_unique_in_sorted(&sorted_data)
+}
+
+fn count_unique_by_sort_unstable(data: &[u64]) -> usize {
+    let mut sorted_data = data.to_vec();
+    sorted_data.sort_unstable();
+    count_unique_in_sorted(&sorted_data)
+}
+
+fn count_unique_by_voracious_sort(data: &[u64]) -> usize {
+    let mut sorted_data = data.to_vec();
+    sorted_data.voracious_sort();
+    count_unique_in_sorted(&sorted_data)
+}
+
+fn count_unique_in_sorted(sorted_data: &[u64]) -> usize {
+    if sorted_data.is_empty() {
+        return 0;
+    }
+    
+    let mut count = 1;
+    let mut prev = sorted_data[0];
+    
+    for &current in &sorted_data[1..] {
+        if current != prev {
+            count += 1;
+            prev = current;
+        }
+    }
+    
+    count
 }
 
 fn benchmark(name: &str, repeats: usize, mut f: impl FnMut()) {
@@ -96,6 +133,18 @@ fn main() {
         let foldhash_hasher = FoldRandomState::default();
         benchmark("HashSet (FoldHash)", repeats, || {
             count_unique_by_hash(&data, foldhash_hasher.clone());
+        });
+
+        benchmark("Sort + dedup", repeats, || {
+            count_unique_by_sort(&data);
+        });
+
+        benchmark("Sort unstable + dedup", repeats, || {
+            count_unique_by_sort_unstable(&data);
+        });
+
+        benchmark("Voracious sort + dedup", repeats, || {
+            count_unique_by_voracious_sort(&data);
         });
     }
 }
