@@ -13,9 +13,9 @@ impl StatelessU64Hasher for NoopHasher {
 
 pub struct MurmurHasher;
 
-impl StatelessU64Hasher for MurmurHasher {
+impl MurmurHasher {
     #[inline(always)]
-    fn hash(value: u64) -> u64 {
+    pub fn hash_u64(value: u64) -> u64 {
         // MurmurHash3 64-bit finalizer
         let mut h = value;
         h ^= h >> 33;
@@ -24,6 +24,13 @@ impl StatelessU64Hasher for MurmurHasher {
         h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
         h ^= h >> 33;
         h
+    }
+}
+
+impl StatelessU64Hasher for MurmurHasher {
+    #[inline(always)]
+    fn hash(value: u64) -> u64 {
+        Self::hash_u64(value)
     }
 }
 

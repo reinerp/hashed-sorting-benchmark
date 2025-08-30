@@ -33,6 +33,14 @@ fn count_unique_by_voracious_sort(data: &[u64]) -> usize {
     count_unique_in_sorted(&sorted_data)
 }
 
+fn count_unique_by_hashed_sort(data: &[u64]) -> usize {
+    let mut hashed_data: Vec<u64> = data.iter().map(|&x| {
+        MurmurHasher::hash_u64(x)
+    }).collect();
+    hashed_data.voracious_sort();
+    count_unique_in_sorted(&hashed_data)
+}
+
 fn count_unique_in_sorted(sorted_data: &[u64]) -> usize {
     if sorted_data.is_empty() {
         return 0;
@@ -143,6 +151,10 @@ fn main() {
 
         benchmark("Voracious sort + dedup", repeats, || {
             count_unique_by_voracious_sort(&data);
+        });
+
+        benchmark("Hashed sort + dedup", repeats, || {
+            count_unique_by_hashed_sort(&data);
         });
     }
 }
