@@ -42,10 +42,8 @@ fn count_unique_in_sorted(sorted_data: &[u64]) -> usize {
     let mut prev = sorted_data[0];
     
     for &current in &sorted_data[1..] {
-        if current != prev {
-            count += 1;
-            prev = current;
-        }
+        count += (current != prev) as usize;
+        prev = current;
     }
     
     count
