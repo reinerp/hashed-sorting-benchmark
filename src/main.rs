@@ -15,25 +15,16 @@ fn count_unique_by_hash<Hasher: BuildHasher>(data: &[u64], hasher: Hasher) -> us
     hasher.len()
 }
 
-fn count_unique_by_sort(data: &[u64]) -> usize {
+fn count_unique_by_sort<F>(data: &[u64], sort_fn: F) -> usize 
+where
+    F: FnOnce(&mut Vec<u64>),
+{
     let mut sorted_data = data.to_vec();
-    sorted_data.sort();
+    sort_fn(&mut sorted_data);
     count_unique_in_sorted(&sorted_data)
 }
 
-fn count_unique_by_sort_unstable(data: &[u64]) -> usize {
-    let mut sorted_data = data.to_vec();
-    sorted_data.sort_unstable();
-    count_unique_in_sorted(&sorted_data)
-}
-
-fn count_unique_by_voracious_sort(data: &[u64]) -> usize {
-    let mut sorted_data = data.to_vec();
-    sorted_data.voracious_sort();
-    count_unique_in_sorted(&sorted_data)
-}
-
-fn count_unique_by_hashed_voracious_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
+fn count_unique_by_hashed_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
     let mut hashed_data = data.to_vec();
     for d in &mut hashed_data {
         *d = H::hash(*d);
@@ -105,17 +96,37 @@ fn human_size(size: usize) -> String {
     format!("{}GiB", size)
 }
 
+#[allow(dead_code)]
+enum MaskStyle {
+    /// All the entropy is in the low bits. Friendly to most algorithms, even with Noop hashing.
+    LowBits,
+    /// All the entropy is in the high bits. Unfriendly to most hashing algorithms, which need entropy in the low bits.
+    /// Friendly enough for radix sort algorithms which are adaptive to where the entropy is.
+    HighBits,
+    /// The entropy is spread out over pairs of bits: each even bit is equal to the next odd bit. This tends to be
+    /// unfriendly to NoOp hashing both for hashing and radix sort algorithms.
+    SpreadOut2x,
+}
+
 fn main() {
     let mut rng = fastrand::Rng::with_seed(0);
-    for lg_size in [10, 15, 20, 25, 27] {
+    let mask_style = MaskStyle::LowBits;
+    for lg_size in [10, 15, 20] {
         let mut data = vec![0u64; 1 << lg_size];
-        // Use a mask that has the high lg_size bits set. This way we will have a small
-        // but nonzero number of duplicates.
-        // let mask = (1u64 << lg_size).wrapping_neg();
-        let mask = (1u64 << lg_size) - 1;
+        let mask = match mask_style {
+            MaskStyle::LowBits => (1u64 << lg_size) - 1,
+            MaskStyle::HighBits => (1u64 << lg_size).wrapping_neg(),
+            MaskStyle::SpreadOut2x => ((1u64 << (2 * lg_size)) - 1) & 0x5555_5555_5555_5555,
+        };
         for d in &mut data {
-            *d = rng.u64(..) & mask;
+            let random = rng.u64(..);
+            let mut masked = random & mask;
+            if matches!(mask_style, MaskStyle::SpreadOut2x) {
+                masked = masked | (masked << 1);
+            }
+            *d = masked;
         }
+        
         let repeats = 1usize << 25usize.saturating_sub(lg_size);
         println!(
             "size: {}",
@@ -127,10 +138,15 @@ fn main() {
             count_unique_by_hash(&data, sip_hasher.clone());
         });
 
-        let noop_hasher = BuildHasherDefault::<U64Hasher<NoopHasher>>::default();
-        benchmark("HashSet (NoOp)", repeats, || {
-            count_unique_by_hash(&data, noop_hasher.clone());
-        });
+        // Don't run NoOp hashing for huge sizes when the data is unfavorable to it; it takes forever.
+        let noop_will_finish = lg_size < 25 || matches!(mask_style, MaskStyle::LowBits);
+        if noop_will_finish {
+            let noop_will_be_fast = lg_size < 20 || matches!(mask_style, MaskStyle::LowBits);
+            let noop_hasher = BuildHasherDefault::<U64Hasher<NoopHasher>>::default();
+            benchmark("HashSet (NoOp)", if noop_will_be_fast { repeats } else { 1 }, || {
+                count_unique_by_hash(&data, noop_hasher.clone());
+            });
+        }
 
         let murmur_hasher = BuildHasherDefault::<U64Hasher<MurmurHasher>>::default();
         benchmark("HashSet (Murmur)", repeats, || {
@@ -143,27 +159,27 @@ fn main() {
         });
 
         benchmark("Sorting (merge sort)", repeats, || {
-            count_unique_by_sort(&data);
+            count_unique_by_sort(&data, |v| v.sort());
         });
 
         benchmark("Sorting (quick sort)", repeats, || {
-            count_unique_by_sort_unstable(&data);
+            count_unique_by_sort(&data, |v| v.sort_unstable());
         });
 
         benchmark("Sorting (radix sort)", repeats, || {
-            count_unique_by_voracious_sort(&data);
+            count_unique_by_sort(&data, |v| v.voracious_sort());
         });
 
         benchmark("Hashed sorting (radix + Murmur)", repeats, || {
-            count_unique_by_hashed_voracious_sort::<MurmurHasher>(&data);
+            count_unique_by_hashed_sort::<MurmurHasher>(&data);
         });
 
         benchmark("Hashed sorting (radix + MulSwapMul)", repeats, || {
-            count_unique_by_hashed_voracious_sort::<MulSwapMulHasher>(&data);
+            count_unique_by_hashed_sort::<MulSwapMulHasher>(&data);
         });
 
-        benchmark("Hashed voracious (radix + NoOp)", repeats, || {
-            count_unique_by_hashed_voracious_sort::<NoopHasher>(&data);
+        benchmark("Hashed sorting (radix + NoOp)", repeats, || {
+            count_unique_by_hashed_sort::<NoopHasher>(&data);
         });
     }
 }
