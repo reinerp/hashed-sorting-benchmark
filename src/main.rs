@@ -1,8 +1,10 @@
 use fastrand;
+use foldhash::fast::RandomState as FoldRandomState;
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, RandomState};
+use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
 mod hashers;
+use hashers::{MurmurHasher, NoopHasher, U64Hasher};
 
 fn count_unique_by_hash<Hasher: BuildHasher>(data: &[u64], hasher: Hasher) -> usize {
     let mut hasher = HashSet::with_capacity_and_hasher(data.len(), hasher);
@@ -61,11 +63,12 @@ fn human_size(size: usize) -> String {
 
 fn main() {
     let mut rng = fastrand::Rng::with_seed(0);
-    for lg_size in [10, 15, 20, 25, 28] {
+    for lg_size in [10, 15, 20, 25] {
         let mut data = vec![0u64; 1 << lg_size];
         // Use a mask that has the high lg_size bits set. This way we will have a small
         // but nonzero number of duplicates.
-        let mask = (1u64 << lg_size).wrapping_neg();
+        // let mask = (1u64 << lg_size).wrapping_neg();
+        let mask = (1u64 << lg_size) - 1;
         for d in &mut data {
             *d = rng.u64(..) & mask;
         }
@@ -78,6 +81,21 @@ fn main() {
         let sip_hasher = RandomState::new(); // Unfortunately not seedable :(
         benchmark("HashSet (SipHash)", repeats, || {
             count_unique_by_hash(&data, sip_hasher.clone());
+        });
+
+        let noop_hasher = BuildHasherDefault::<U64Hasher<NoopHasher>>::default();
+        benchmark("HashSet (NoOp)", repeats, || {
+            count_unique_by_hash(&data, noop_hasher.clone());
+        });
+
+        let murmur_hasher = BuildHasherDefault::<U64Hasher<MurmurHasher>>::default();
+        benchmark("HashSet (Murmur)", repeats, || {
+            count_unique_by_hash(&data, murmur_hasher.clone());
+        });
+
+        let foldhash_hasher = FoldRandomState::default();
+        benchmark("HashSet (FoldHash)", repeats, || {
+            count_unique_by_hash(&data, foldhash_hasher.clone());
         });
     }
 }

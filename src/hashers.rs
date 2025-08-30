@@ -11,6 +11,22 @@ impl StatelessU64Hasher for NoopHasher {
     }
 }
 
+pub struct MurmurHasher;
+
+impl StatelessU64Hasher for MurmurHasher {
+    #[inline(always)]
+    fn hash(value: u64) -> u64 {
+        // MurmurHash3 64-bit finalizer
+        let mut h = value;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51afd7ed558ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+        h ^= h >> 33;
+        h
+    }
+}
+
 pub struct U64Hasher<Hasher: StatelessU64Hasher> {
     result: u64, 
     function: std::marker::PhantomData<Hasher>,
