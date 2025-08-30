@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+dashmap = "6.1.0"
 fastrand = "2.3.0"
 foldhash = "0.2.0"
-voracious_radix_sort = "1.2.0"
+rayon = "1.10.0"
+scc = "2.2.4"
+voracious_radix_sort = { version = "1.2.0", features = ["voracious_multithread"] }

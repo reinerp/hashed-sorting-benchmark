@@ -1,5 +1,8 @@
+use dashmap::DashMap;
 use fastrand;
 use foldhash::fast::RandomState as FoldRandomState;
+use rayon::prelude::*;
+use scc::HashSet as SccHashSet;
 use std::collections::HashSet;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
@@ -15,6 +18,25 @@ fn count_unique_by_hash<Hasher: BuildHasher>(data: &[u64], hasher: Hasher) -> us
     hasher.len()
 }
 
+fn count_unique_by_parallel_hash<Hasher: BuildHasher + Clone + Send + Sync>(data: &[u64], hasher: Hasher) -> usize
+where
+    Hasher::Hasher: Send,
+{
+    let dashmap = DashMap::with_capacity_and_hasher(data.len(), hasher);
+    data.par_iter().for_each(|&d| {
+        dashmap.insert(d, ());
+    });
+    dashmap.len()
+}
+
+fn count_unique_by_scc_parallel_hash<Hasher: BuildHasher + Sync>(data: &[u64], hasher: Hasher) -> usize {
+    let scc_set: SccHashSet<u64, Hasher> = SccHashSet::with_hasher(hasher);
+    data.par_iter().for_each(|&d| {
+        let _ = scc_set.insert(d);
+    });
+    scc_set.len()
+}
+
 fn count_unique_by_sort<F>(data: &[u64], sort_fn: F) -> usize 
 where
     F: FnOnce(&mut Vec<u64>),
@@ -25,12 +47,32 @@ where
 }
 
 fn count_unique_by_hashed_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
-    let mut hashed_data = data.to_vec();
-    for d in &mut hashed_data {
-        *d = H::hash(*d);
-    }
+    // let mut hashed_data = data.to_vec();
+    // for d in &mut hashed_data {
+    //     *d = H::hash(*d);
+    // }
+    let mut hashed_data = data.par_iter().map(|&d| H::hash(d)).collect::<Vec<_>>();
     hashed_data.voracious_sort();
     count_unique_in_sorted(&hashed_data)
+}
+
+fn count_unique_by_parallel_sort<F>(data: &[u64], sort_fn: F) -> usize 
+where
+    F: FnOnce(&mut Vec<u64>),
+{
+    let mut sorted_data = Vec::new();
+    data.par_iter().copied().collect_into_vec(&mut sorted_data);
+    // let mut sorted_data = data.to_vec();
+    sort_fn(&mut sorted_data);
+    count_unique_in_sorted_parallel(&sorted_data)
+}
+
+fn count_unique_by_hashed_parallel_sort<H: StatelessU64Hasher>(data: &[u64], sort_fn: impl FnOnce(&mut Vec<u64>)) -> usize 
+{
+    let mut sorted_data = Vec::new();
+    data.par_iter().map(|&d| H::hash(d)).collect_into_vec(&mut sorted_data);
+    sort_fn(&mut sorted_data);
+    count_unique_in_sorted_parallel(&sorted_data)
 }
 
 fn count_unique_in_sorted(sorted_data: &[u64]) -> usize {
@@ -47,6 +89,13 @@ fn count_unique_in_sorted(sorted_data: &[u64]) -> usize {
     }
     
     count
+}
+
+fn count_unique_in_sorted_parallel(sorted_data: &[u64]) -> usize {
+    if sorted_data.is_empty() {
+        return 0;
+    }
+    1 + sorted_data.par_windows(2).map(|w| (w[0] != w[1]) as usize).sum::<usize>()
 }
 
 fn benchmark(name: &str, repeats: usize, mut f: impl FnMut()) {
@@ -109,9 +158,13 @@ enum MaskStyle {
 }
 
 fn main() {
+    let num_threads = rayon::current_num_threads();
+    println!("Using {} threads for parallel algorithms", num_threads);
+    
     let mut rng = fastrand::Rng::with_seed(0);
     let mask_style = MaskStyle::LowBits;
-    for lg_size in [10, 15, 20] {
+    // 10, 15, 20, 25, 27
+    for lg_size in [25] {
         let mut data = vec![0u64; 1 << lg_size];
         let mask = match mask_style {
             MaskStyle::LowBits => (1u64 << lg_size) - 1,
@@ -180,6 +233,46 @@ fn main() {
 
         benchmark("Hashed sorting (radix + NoOp)", repeats, || {
             count_unique_by_hashed_sort::<NoopHasher>(&data);
+        });
+
+        // Parallel benchmarks
+        benchmark("Parallel HashSet (dashmap + SipHash)", repeats, || {
+            count_unique_by_parallel_hash(&data, sip_hasher.clone());
+        });
+
+        benchmark("Parallel HashSet (dashmap + Murmur)", repeats, || {
+            count_unique_by_parallel_hash(&data, murmur_hasher.clone());
+        });
+
+        benchmark("Parallel HashSet (dashmap + FoldHash)", repeats, || {
+            count_unique_by_parallel_hash(&data, foldhash_hasher.clone());
+        });
+
+        benchmark("Parallel HashSet (scc + SipHash)", repeats, || {
+            count_unique_by_scc_parallel_hash(&data, sip_hasher.clone());
+        });
+
+        benchmark("Parallel HashSet (scc + Murmur)", repeats, || {
+            count_unique_by_scc_parallel_hash(&data, murmur_hasher.clone());
+        });
+
+        benchmark("Parallel HashSet (scc + FoldHash)", repeats, || {
+            count_unique_by_scc_parallel_hash(&data, foldhash_hasher.clone());
+        });
+
+        benchmark("Parallel sorting (merge sort)", repeats, || {
+            count_unique_by_parallel_sort(&data, |v| v.par_sort());
+        });
+
+        benchmark("Parallel sorting (quick sort)", repeats, || {
+            count_unique_by_parallel_sort(&data, |v| v.par_sort_unstable());
+        });
+
+        benchmark("Parallel sorting (radix sort)", repeats, || {
+            count_unique_by_parallel_sort(&data, |v| v.voracious_mt_sort(num_threads));
+        });
+        benchmark("Parallel hashed sorting (radix + MulSwapMul)", repeats, || {
+            count_unique_by_hashed_parallel_sort::<MulSwapMulHasher>(&data, |v| v.voracious_mt_sort(num_threads));
         });
     }
 }
