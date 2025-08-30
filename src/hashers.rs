@@ -34,6 +34,20 @@ impl StatelessU64Hasher for MurmurHasher {
     }
 }
 
+pub struct CheapHasher;
+
+impl StatelessU64Hasher for CheapHasher {
+    #[inline(always)]
+    fn hash(value: u64) -> u64 {
+        // Cheap bijective hasher: multiply-byteswap-multiply
+        let mut h = value;
+        h = h.wrapping_mul(0x9e3779b97f4a7c15); // First odd constant
+        h = h.swap_bytes(); // Byte swap
+        h = h.wrapping_mul(0xc2b2ae3d27d4eb4f); // Second odd constant
+        h
+    }
+}
+
 pub struct U64Hasher<Hasher: StatelessU64Hasher> {
     result: u64, 
     function: std::marker::PhantomData<Hasher>,
