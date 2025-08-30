@@ -1,11 +1,11 @@
 use fastrand;
 use foldhash::fast::RandomState as FoldRandomState;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
 use voracious_radix_sort::RadixSort;
 mod hashers;
-use hashers::{CheapHasher, MurmurHasher, NoopHasher, StatelessU64Hasher, U64Hasher};
+use hashers::{MulSwapMulHasher, MurmurHasher, NoopHasher, StatelessU64Hasher, U64Hasher};
 
 fn count_unique_by_hash<Hasher: BuildHasher>(data: &[u64], hasher: Hasher) -> usize {
     let mut hasher = HashSet::with_capacity_and_hasher(data.len(), hasher);
@@ -34,9 +34,10 @@ fn count_unique_by_voracious_sort(data: &[u64]) -> usize {
 }
 
 fn count_unique_by_hashed_voracious_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
-    let mut hashed_data: Vec<u64> = data.iter().map(|&x| {
-        H::hash(x)
-    }).collect();
+    let mut hashed_data = data.to_vec();
+    for d in &mut hashed_data {
+        *d = H::hash(*d);
+    }
     hashed_data.voracious_sort();
     count_unique_in_sorted(&hashed_data)
 }
@@ -106,7 +107,7 @@ fn human_size(size: usize) -> String {
 
 fn main() {
     let mut rng = fastrand::Rng::with_seed(0);
-    for lg_size in [10, 15, 20, 25] {
+    for lg_size in [10, 15, 20, 25, 27] {
         let mut data = vec![0u64; 1 << lg_size];
         // Use a mask that has the high lg_size bits set. This way we will have a small
         // but nonzero number of duplicates.
@@ -141,24 +142,28 @@ fn main() {
             count_unique_by_hash(&data, foldhash_hasher.clone());
         });
 
-        benchmark("Sort + dedup", repeats, || {
+        benchmark("Sorting (merge sort)", repeats, || {
             count_unique_by_sort(&data);
         });
 
-        benchmark("Sort unstable + dedup", repeats, || {
+        benchmark("Sorting (quick sort)", repeats, || {
             count_unique_by_sort_unstable(&data);
         });
 
-        benchmark("Voracious sort + dedup", repeats, || {
+        benchmark("Sorting (radix sort)", repeats, || {
             count_unique_by_voracious_sort(&data);
         });
 
-        benchmark("Hashed voracious (Murmur)", repeats, || {
+        benchmark("Hashed sorting (radix + Murmur)", repeats, || {
             count_unique_by_hashed_voracious_sort::<MurmurHasher>(&data);
         });
 
-        benchmark("Hashed voracious (Cheap)", repeats, || {
-            count_unique_by_hashed_voracious_sort::<CheapHasher>(&data);
+        benchmark("Hashed sorting (radix + MulSwapMul)", repeats, || {
+            count_unique_by_hashed_voracious_sort::<MulSwapMulHasher>(&data);
+        });
+
+        benchmark("Hashed voracious (radix + NoOp)", repeats, || {
+            count_unique_by_hashed_voracious_sort::<NoopHasher>(&data);
         });
     }
 }

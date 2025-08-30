@@ -34,9 +34,9 @@ impl StatelessU64Hasher for MurmurHasher {
     }
 }
 
-pub struct CheapHasher;
+pub struct MulSwapMulHasher;
 
-impl StatelessU64Hasher for CheapHasher {
+impl StatelessU64Hasher for MulSwapMulHasher {
     #[inline(always)]
     fn hash(value: u64) -> u64 {
         // Cheap bijective hasher: multiply-byteswap-multiply
@@ -54,7 +54,7 @@ pub struct U64Hasher<Hasher: StatelessU64Hasher> {
 }
 
 impl<Hasher: StatelessU64Hasher> std::hash::Hasher for U64Hasher<Hasher> {
-    fn write(&mut self, bytes: &[u8]) {
+    fn write(&mut self, _bytes: &[u8]) {
         unreachable!("Expected u64, got bytes");
     }
 
