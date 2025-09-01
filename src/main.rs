@@ -1,5 +1,6 @@
 mod hashers;
 mod u64_hash_set;
+mod wide_merge_sort;
 
 use dashmap::DashMap;
 use fastrand;
@@ -12,6 +13,7 @@ use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
 use u64_hash_set::U64HashSet;
 use voracious_radix_sort::RadixSort;
+
 
 // Configuration choices:
 const MASK_STYLE: MaskStyle = MaskStyle::SpreadOut2x;
