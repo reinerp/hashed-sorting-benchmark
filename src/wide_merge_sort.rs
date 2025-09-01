@@ -1,5 +1,6 @@
 const N: usize = 256;
 
+#[inline(always)]
 fn merge256(mut srcs: [std::slice::Iter<u64>; N], dst: &mut [u64]) {
     // Head of each list. u64::MAX sentinel if the list is exhausted.
     let mut keys: [u64; N] = std::array::from_fn(|i| srcs[i].next().copied().unwrap_or(u64::MAX));
@@ -76,4 +77,53 @@ fn merge256(mut srcs: [std::slice::Iter<u64>; N], dst: &mut [u64]) {
         loser_table[0] = winner_i as u8;
     }
 
+}
+
+pub fn wide_merge_sort(data: &mut [u64]) {
+    if data.len() <= 1024 {
+        data.sort_unstable();
+        return;
+    }
+    
+    // Single allocation for auxiliary buffer
+    let mut aux = vec![0u64; data.len()];
+    wide_merge_sort_recursive(data, &mut aux, false);
+}
+
+/// Recursively sorts the data using 256-way merge sort.
+/// 
+/// If write_to_aux is true, writes the result to aux. Otherwise, writes the result to data.
+fn wide_merge_sort_recursive(data: &mut [u64], aux: &mut [u64], write_to_aux: bool) {
+    let len = data.len();
+    
+    // Base case: use sort_unstable for small arrays
+    // Output: data (in-place sort)
+    if len <= 1024 {
+        data.sort_unstable();
+        if write_to_aux {
+            aux.copy_from_slice(data);
+        }
+        return;
+    }
+
+    // Recurse on chunks.
+    let not_write_to_aux = !write_to_aux;
+    for i in 0..N {
+        let chunk_start = (len * i) / N;
+        let chunk_end = (len * (i + 1)) / N;
+        let chunk_range = chunk_start..chunk_end;
+        wide_merge_sort_recursive(&mut data[chunk_range.clone()], &mut aux[chunk_range], not_write_to_aux);
+    }
+    // Merge.
+    let (merge_src, merge_dst) = if write_to_aux {
+        (data, aux)
+    } else {
+        (aux, data)
+    };
+    let srcs = std::array::from_fn(|i| {
+        let chunk_start = (len * i) / N;
+        let chunk_end = (len * (i + 1)) / N;
+        merge_src[chunk_start..chunk_end].iter()
+    });
+    merge256(srcs, merge_dst)
 }

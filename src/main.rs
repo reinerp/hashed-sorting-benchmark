@@ -13,12 +13,13 @@ use std::hash::{BuildHasher, BuildHasherDefault, RandomState};
 use std::time::{Duration, Instant};
 use u64_hash_set::U64HashSet;
 use voracious_radix_sort::RadixSort;
+use wide_merge_sort::wide_merge_sort;
 
 
 // Configuration choices:
 const MASK_STYLE: MaskStyle = MaskStyle::SpreadOut2x;
 const LG_ACCESSES_PER_ELEMENT: usize = 1;
-const BENCHMARK_FILTERS: &[&str] = &["dense_table + MulSwapMul", "Sorting (radix sort)", "Hashed sorting (radix + MulSwapMul)", "Sorting (quick sort)", "HashSet (SwissTable + FoldHash)", "HashSet (SwissTable + MulSwapMul)"];
+const BENCHMARK_FILTERS: &[&str] = &["memcpy", "Hashed sorting (radix + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
 const SIZES: &[usize] = &[10, 15, 20, 25, 28];
 
 
@@ -253,9 +254,20 @@ fn main() {
             human_size(std::mem::size_of::<u64>() * data.len())
         );
 
+        {
+            let mut data_copy = vec![0u64; data.len() + 1];
+            let mut i = 0;
+            benchmark("memcpy", repeats, || {
+                std::hint::black_box(&mut data_copy[i..data.len() + i]).copy_from_slice(std::hint::black_box(&data));
+                i ^= std::hint::black_box(1);
+            });
+            std::hint::black_box(data_copy);
+        }
+
         // For smaller benchmarks, we run all benchmarks. For larger benchmarks, we only run
         // the algorithms that are at least a certain speed.
-        let is_smaller = lg_size <= 25;
+        // let is_smaller = lg_size <= 25;
+        let is_smaller = true;
         // Don't run NoOp hashing for huge sizes when the data is unfavorable to it; it takes forever.
         let noop_will_finish = lg_size < 25 || matches!(mask_style, MaskStyle::LowBits);
         let noop_will_be_fast = lg_size < 20 || matches!(mask_style, MaskStyle::LowBits);
@@ -326,6 +338,10 @@ fn main() {
 
         benchmark("Sorting (radix sort)", repeats, || {
             count_unique_by_sort(&data, |v| v.voracious_sort());
+        });
+
+        benchmark("Sorting (wide merge sort)", repeats, || {
+            count_unique_by_sort(&data, |v| wide_merge_sort(v));
         });
 
         if is_smaller {
