@@ -8,7 +8,7 @@ const WORD_BITS: u32 = 64;
 const MAX_PASSES: usize = WORD_BITS.div_ceil(LG_RADIX) as usize;
 const CHUNK_SIZE: usize = 4;
 
-pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
+pub fn dlsd_sort_and_count<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> usize {
     let passes = orig_data
         .len()
         .next_power_of_two()
@@ -37,7 +37,7 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
     };
     println!("counts time: {:?}", counts_start.elapsed());
     let aux_alloc_start = Instant::now();
-    let mut aux = vec![0u64; data.len()];
+    let mut aux = vec![0u64; data.len()];  // TODO: MaybeUninit
     println!("aux alloc time: {:?}", aux_alloc_start.elapsed());
     let passes_start = Instant::now();
     let mut from = &mut data[..];
@@ -66,7 +66,7 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
     println!("normal passes time: {:?}", passes_start.elapsed());
 
     let last_pass_start = Instant::now();
-    // Last pass does dealing and fused insertion sort.
+    // Last pass does dealing and fused insertion sort and counting.
     let pass = passes - 1;
     #[derive(Clone, Copy)]
     struct Head {
@@ -82,6 +82,8 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
         };
         pos += counts[pass][i];
     }
+    let sorted_bits_mask = (1u64 << (WORD_BITS - (passes as u32 * LG_RADIX))).wrapping_neg();
+    let mut unique_count = 0;
     for chunk in from.as_chunks::<CHUNK_SIZE>().0 {
         for &word in chunk {
             let radix = read_radix(word, pass, passes);
@@ -93,16 +95,23 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
                 j -= 1;
             }
             unsafe { *to.get_unchecked_mut(j) = word };
+            if j > head.start {
+                let prev_word = unsafe { *to.get_unchecked(j - 1) };
+                unique_count += (prev_word < word) as usize;
+                if (prev_word & sorted_bits_mask) != (word & sorted_bits_mask) {
+                    // Stay in cache: once we've finished with a group, reset back to the beginning of the group.
+                    //
+                    // This is because we don't actually care about sorted order: we just care about the count.
+                    head.pos = head.start;
+                }
+            } else {
+                unique_count += 1;
+            }
             head.pos += 1;
         }
     }
     println!("last pass time: {:?}", last_pass_start.elapsed());
-    let final_copy_start = Instant::now();
-    if passes % 2 == 1 {
-        to.copy_from_slice(from);
-    }
-    println!("final copy time: {:?}", final_copy_start.elapsed());
-    data
+    unique_count
 }
 
 fn compute_counts<const PASSES: usize, Hasher: StatelessU64Hasher>(

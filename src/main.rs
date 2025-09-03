@@ -1,5 +1,6 @@
 #![feature(core_intrinsics)]
 mod dlsd;
+mod dlsd_and_count;
 mod hashers;
 mod u64_hash_set;
 mod wide_merge_sort;
@@ -18,13 +19,14 @@ use voracious_radix_sort::RadixSort;
 use wide_merge_sort::wide_merge_sort;
 
 use crate::dlsd::dlsd_sort;
+use crate::dlsd_and_count::dlsd_sort_and_count;
 
 
 // Configuration choices:
 const MASK_STYLE: MaskStyle = MaskStyle::SpreadOut2x;
 const LG_ACCESSES_PER_ELEMENT: usize = 0;
-// const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (radix + MulSwapMul)", "Hashed sorting (dlsd + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
-const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (dlsd + MulSwapMul)"];
+const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (radix + MulSwapMul)", "Hashed sorting (dlsd + MulSwapMul)", "Hashed sorting (fused dlsd_and_count + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
+// const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (dlsd + MulSwapMul)", "Hashed sorting (fused dlsd_and_count + MulSwapMul)"];
 // const SIZES: &[usize] = &[10, 15, 20, 25, 28];
 const SIZES: &[usize] = &[28];
 const PREFETCH_DISTANCE: usize = 64;
@@ -134,6 +136,14 @@ fn count_unique_by_hashed_dlsd_sort<H: StatelessU64Hasher>(data: &[u64]) -> usiz
     let count_start = Instant::now();
     let count = count_unique_in_sorted(&sorted_data);
     println!("count time: {:?}", count_start.elapsed());
+    println!("count: {}", count);
+    std::hint::black_box(count)
+}
+
+fn count_unique_by_fused_hashed_dlsd_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
+    println!("\n\n");
+    let count = dlsd_sort_and_count::<H>(data);
+    println!("count: {}", count);
     std::hint::black_box(count)
 }
 
@@ -409,6 +419,10 @@ fn main() {
 
         benchmark("Hashed sorting (dlsd + MulSwapMul)", repeats, || {
             count_unique_by_hashed_dlsd_sort::<MulSwapMulHasher>(&data);
+        });
+
+        benchmark("Hashed sorting (fused dlsd_and_count + MulSwapMul)", repeats, || {
+            count_unique_by_fused_hashed_dlsd_sort::<MulSwapMulHasher>(&data);
         });
 
         // Parallel benchmarks
