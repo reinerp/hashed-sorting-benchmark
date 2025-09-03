@@ -1,3 +1,5 @@
+#![feature(core_intrinsics)]
+mod dlsd;
 mod hashers;
 mod u64_hash_set;
 mod wide_merge_sort;
@@ -15,12 +17,17 @@ use u64_hash_set::U64HashSet;
 use voracious_radix_sort::RadixSort;
 use wide_merge_sort::wide_merge_sort;
 
+use crate::dlsd::dlsd_sort;
+
 
 // Configuration choices:
 const MASK_STYLE: MaskStyle = MaskStyle::SpreadOut2x;
-const LG_ACCESSES_PER_ELEMENT: usize = 1;
-const BENCHMARK_FILTERS: &[&str] = &["memcpy", "Hashed sorting (radix + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
-const SIZES: &[usize] = &[10, 15, 20, 25, 28];
+const LG_ACCESSES_PER_ELEMENT: usize = 0;
+// const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (radix + MulSwapMul)", "Hashed sorting (dlsd + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
+const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (dlsd + MulSwapMul)"];
+// const SIZES: &[usize] = &[10, 15, 20, 25, 28];
+const SIZES: &[usize] = &[28];
+const PREFETCH_DISTANCE: usize = 64;
 
 
 
@@ -35,6 +42,8 @@ enum MaskStyle {
     /// The entropy is spread out over pairs of bits: each even bit is equal to the next odd bit. This tends to be
     /// unfriendly to NoOp hashing both for hashing and radix sort algorithms.
     SpreadOut2x,
+    /// All bits are used.
+    AllBits,
 }
 
 #[derive(Debug)]
@@ -62,7 +71,8 @@ fn count_unique_by_hash<Hasher: BuildHasher>(
 
 fn count_unique_by_u64_hash<H: StatelessU64Hasher>(data: &[u64], domain_size: usize) -> usize {
     let mut set = U64HashSet::<H>::with_capacity(domain_size);
-    for &d in data {
+    for (&d, &prefetch_d) in data.iter().zip(data.iter().skip(PREFETCH_DISTANCE)) {
+        set.prefetch(prefetch_d);
         set.insert(d);
     }
     set.len()
@@ -108,7 +118,23 @@ where
 fn count_unique_by_hashed_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
     let mut hashed_data = data.iter().map(|&d| H::hash(d)).collect::<Vec<_>>();
     hashed_data.voracious_sort();
-    count_unique_in_sorted(&hashed_data)
+    let count = count_unique_in_sorted(&hashed_data);
+    std::hint::black_box(count)
+}
+
+fn count_unique_by_hashed_dlsd_sort<H: StatelessU64Hasher>(data: &[u64]) -> usize {
+    println!("\n\n");
+    // let hash_start = Instant::now();
+    // let mut sorted_data = data.to_vec();
+    // println!("copy time: {:?}", hash_start.elapsed());
+    let dlsd_start = Instant::now();
+    let sorted_data = dlsd_sort::<H>(data);
+    println!("dlsd time: {:?}", dlsd_start.elapsed());
+    println!("len: {}", sorted_data.len());
+    let count_start = Instant::now();
+    let count = count_unique_in_sorted(&sorted_data);
+    println!("count time: {:?}", count_start.elapsed());
+    std::hint::black_box(count)
 }
 
 fn count_unique_by_parallel_sort<F>(data: &[u64], sort_fn: F) -> usize
@@ -221,8 +247,8 @@ fn main() {
     let mask_style = MASK_STYLE;
     let lg_accesses_per_element = LG_ACCESSES_PER_ELEMENT;
     println!(
-        "mask style: {:?}, average accesses per element: 2^{}",
-        mask_style, lg_accesses_per_element
+        "mask style: {:?}, average accesses per element: 2^{}, prefetch distance: {}",
+        mask_style, lg_accesses_per_element, PREFETCH_DISTANCE
     );
 
     // let num_threads = rayon::current_num_threads();
@@ -238,6 +264,7 @@ fn main() {
             MaskStyle::LowBits => (1u64 << lg_domain_size) - 1,
             MaskStyle::HighBits => (1u64 << lg_domain_size).wrapping_neg(),
             MaskStyle::SpreadOut2x => ((1u64 << (2 * lg_domain_size)) - 1) & 0x5555_5555_5555_5555,
+            MaskStyle::AllBits => u64::MAX,
         };
         for d in &mut data {
             let random = rng.u64(..);
@@ -263,6 +290,25 @@ fn main() {
             });
             std::hint::black_box(data_copy);
         }
+        benchmark("random mem fetch (1/8th elements)", repeats, || {
+            let mut sum = 0;
+            let mask = (1usize << lg_size) - 1;
+            for _ in 0..(data.len() / 8) {
+                sum += data[rng.usize(..) & mask];
+            }
+            std::hint::black_box(sum);
+        });
+
+        benchmark("random mem update (1/8th elements)", repeats, || {
+            let mut sum = 0u64;
+            let mask = (1usize << lg_size) - 1;
+            for _ in 0..(data.len() / 8) {
+                let idx = rng.usize(..) & mask;
+                sum = sum.wrapping_add(data[idx]);
+                data[idx] ^= 1;
+            }
+            std::hint::black_box(sum);
+        });
 
         // For smaller benchmarks, we run all benchmarks. For larger benchmarks, we only run
         // the algorithms that are at least a certain speed.
@@ -340,6 +386,10 @@ fn main() {
             count_unique_by_sort(&data, |v| v.voracious_sort());
         });
 
+        // benchmark("Sorting (dlsd sort)", repeats, || {
+        //     count_unique_by_sort(&data, |v| dlsd_sort(v));
+        // });
+
         benchmark("Sorting (wide merge sort)", repeats, || {
             count_unique_by_sort(&data, |v| wide_merge_sort(v));
         });
@@ -355,6 +405,10 @@ fn main() {
 
         benchmark("Hashed sorting (radix + MulSwapMul)", repeats, || {
             count_unique_by_hashed_sort::<MulSwapMulHasher>(&data);
+        });
+
+        benchmark("Hashed sorting (dlsd + MulSwapMul)", repeats, || {
+            count_unique_by_hashed_dlsd_sort::<MulSwapMulHasher>(&data);
         });
 
         // Parallel benchmarks

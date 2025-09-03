@@ -39,6 +39,15 @@ impl<H: StatelessU64Hasher> U64HashSet<H> {
     }
 
     #[inline(always)]
+    pub fn prefetch(&mut self, key: u64) {
+        let hash64 = H::hash(key);
+        let bucket_mask = self.table.len() - 1;
+        let bucket_i = hash64 as usize;
+        // Safety: bucket_mask is correct because the number of buckets is a power of 2.
+        unsafe {std::intrinsics::prefetch_write_data(self.table.get_unchecked(bucket_i & bucket_mask) as *const Bucket as *const u8, 0)};
+    }
+
+    #[inline(always)]
     pub fn insert(&mut self, key: u64) {
         if key == 0 {
             self.len += !self.has_zero as usize;
