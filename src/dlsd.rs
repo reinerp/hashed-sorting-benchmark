@@ -1,4 +1,4 @@
-use std::time::Instant;
+
 
 use crate::hashers::StatelessU64Hasher;
 
@@ -15,8 +15,6 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
         .ilog2()
         .div_ceil(LG_RADIX) as usize;
     assert!(orig_data.len() % CHUNK_SIZE == 0);
-    println!("passes: {}", passes);
-    let counts_start = Instant::now();
     // First gather counts.
     let (mut data, counts) = match passes {
         0 => compute_counts::<0, Hasher>(orig_data),
@@ -35,11 +33,7 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
         13 => compute_counts::<13, Hasher>(orig_data),
         _ => unreachable!("Too many passes!"),
     };
-    println!("counts time: {:?}", counts_start.elapsed());
-    let aux_alloc_start = Instant::now();
     let mut aux = vec![0u64; data.len()];
-    println!("aux alloc time: {:?}", aux_alloc_start.elapsed());
-    let passes_start = Instant::now();
     let mut from = &mut data[..];
     let mut to = &mut aux[..];
     // Now do passes. Non-last passes just do dealing.
@@ -63,9 +57,7 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
         }
         std::mem::swap(&mut from, &mut to);
     }
-    println!("normal passes time: {:?}", passes_start.elapsed());
 
-    let last_pass_start = Instant::now();
     // Last pass does dealing and fused insertion sort.
     let pass = passes - 1;
     #[derive(Clone, Copy)]
@@ -96,12 +88,9 @@ pub fn dlsd_sort<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> Vec<u64> {
             head.pos += 1;
         }
     }
-    println!("last pass time: {:?}", last_pass_start.elapsed());
-    let final_copy_start = Instant::now();
     if passes % 2 == 1 {
         to.copy_from_slice(from);
     }
-    println!("final copy time: {:?}", final_copy_start.elapsed());
     data
 }
 
