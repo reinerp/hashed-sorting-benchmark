@@ -1,3 +1,4 @@
+#![allow(internal_features)]
 #![feature(core_intrinsics)]
 mod dlsd;
 mod dlsd_and_count;
@@ -26,9 +27,7 @@ use crate::dlsd_and_count::dlsd_sort_and_count;
 const MASK_STYLE: MaskStyle = MaskStyle::SpreadOut2x;
 const LG_ACCESSES_PER_ELEMENT: usize = 0;
 const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (radix + MulSwapMul)", "Hashed sorting (dlsd + MulSwapMul)", "Hashed sorting (fused dlsd_and_count + MulSwapMul)", "HashSet (dense_table + MulSwapMul)"];
-// const BENCHMARK_FILTERS: &[&str] = &["Hashed sorting (dlsd + MulSwapMul)", "Hashed sorting (fused dlsd_and_count + MulSwapMul)"];
-// const SIZES: &[usize] = &[10, 15, 20, 25, 28];
-const SIZES: &[usize] = &[28];
+const SIZES: &[usize] = &[10, 15, 20, 25, 28];
 const PREFETCH_DISTANCE: usize = 64;
 
 

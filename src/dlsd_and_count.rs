@@ -7,28 +7,26 @@ const MAX_PASSES: usize = WORD_BITS.div_ceil(LG_RADIX) as usize;
 const CHUNK_SIZE: usize = 4;
 
 pub fn dlsd_sort_and_count<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> usize {
-    let passes = orig_data
-        .len()
-        .next_power_of_two()
-        .ilog2()
-        .div_ceil(LG_RADIX) as usize;
+    let sum_of_radixes = orig_data.len().next_power_of_two().ilog2();
+    let passes = sum_of_radixes.div_ceil(LG_RADIX) as usize;
+    let last_pass_radix = sum_of_radixes - (passes as u32 - 1) * LG_RADIX;
     assert!(orig_data.len() % CHUNK_SIZE == 0);
     // First gather counts.
     let (mut data, counts) = match passes {
-        0 => compute_counts::<0, Hasher>(orig_data),
-        1 => compute_counts::<1, Hasher>(orig_data),
-        2 => compute_counts::<2, Hasher>(orig_data),
-        3 => compute_counts::<3, Hasher>(orig_data),
-        4 => compute_counts::<4, Hasher>(orig_data),
-        5 => compute_counts::<5, Hasher>(orig_data),
-        6 => compute_counts::<6, Hasher>(orig_data),
-        7 => compute_counts::<7, Hasher>(orig_data),
-        8 => compute_counts::<8, Hasher>(orig_data),
-        9 => compute_counts::<9, Hasher>(orig_data),
-        10 => compute_counts::<10, Hasher>(orig_data),
-        11 => compute_counts::<11, Hasher>(orig_data),
-        12 => compute_counts::<12, Hasher>(orig_data),
-        13 => compute_counts::<13, Hasher>(orig_data),
+        0 => compute_counts::<0, Hasher>(orig_data, last_pass_radix),
+        1 => compute_counts::<1, Hasher>(orig_data, last_pass_radix),
+        2 => compute_counts::<2, Hasher>(orig_data, last_pass_radix),
+        3 => compute_counts::<3, Hasher>(orig_data, last_pass_radix),
+        4 => compute_counts::<4, Hasher>(orig_data, last_pass_radix),
+        5 => compute_counts::<5, Hasher>(orig_data, last_pass_radix),
+        6 => compute_counts::<6, Hasher>(orig_data, last_pass_radix),
+        7 => compute_counts::<7, Hasher>(orig_data, last_pass_radix),
+        8 => compute_counts::<8, Hasher>(orig_data, last_pass_radix),
+        9 => compute_counts::<9, Hasher>(orig_data, last_pass_radix),
+        10 => compute_counts::<10, Hasher>(orig_data, last_pass_radix),
+        11 => compute_counts::<11, Hasher>(orig_data, last_pass_radix),
+        12 => compute_counts::<12, Hasher>(orig_data, last_pass_radix),
+        13 => compute_counts::<13, Hasher>(orig_data, last_pass_radix),
         _ => unreachable!("Too many passes!"),
     };
     let mut aux = vec![0u64; data.len()];  // TODO: MaybeUninit
@@ -76,7 +74,7 @@ pub fn dlsd_sort_and_count<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> usi
     let mut unique_count = 0;
     for chunk in from.as_chunks::<CHUNK_SIZE>().0 {
         for &word in chunk {
-            let radix = read_radix(word, pass, passes);
+            let radix = read_last_pass_radix(word, last_pass_radix);
             let head = unsafe { heads.get_unchecked_mut(radix) };
             // Insertion sort backwards towards the beginning of the group.
             let mut j = head.pos;
@@ -105,6 +103,7 @@ pub fn dlsd_sort_and_count<Hasher: StatelessU64Hasher>(orig_data: &[u64]) -> usi
 
 fn compute_counts<const PASSES: usize, Hasher: StatelessU64Hasher>(
     orig_data: &[u64],
+    last_pass_radix: u32,
 ) -> (Vec<u64>, [[usize; RADIX]; MAX_PASSES]) {
     let mut counts = [[0; RADIX]; MAX_PASSES];
     let mut data = Vec::with_capacity(orig_data.len());
@@ -114,11 +113,15 @@ fn compute_counts<const PASSES: usize, Hasher: StatelessU64Hasher>(
         .flat_map(|chunk| {
             chunk.map(|word| {
                 let h = Hasher::hash(word);
-                for pass in 0..PASSES {
+                for pass in 0..PASSES - 1 {
                     let radix = read_radix(h, pass, PASSES);
                     unsafe {
                         *counts.get_unchecked_mut(pass).get_unchecked_mut(radix) += 1;
                     }
+                }
+                let radix = read_last_pass_radix(h, last_pass_radix);
+                unsafe {
+                    *counts.get_unchecked_mut(PASSES - 1).get_unchecked_mut(radix) += 1;
                 }
                 h
             })
@@ -131,4 +134,8 @@ fn read_radix(word: u64, pass: usize, passes: usize) -> usize {
     const MASK: u64 = (1 << LG_RADIX) - 1;
     let shift = WORD_BITS - ((passes - pass) as u32 * LG_RADIX);
     ((word >> shift) & MASK) as usize
+}
+
+fn read_last_pass_radix(word: u64, last_pass_radix: u32) -> usize {
+    (word >> (WORD_BITS - last_pass_radix)) as usize
 }
